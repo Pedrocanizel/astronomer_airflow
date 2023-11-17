@@ -35,3 +35,8 @@ def push_execution_date(execution_date, **context):
     return execution_date.strftime("%Y-%m-%d")
 
 Convertendo pra string a data
+
+@task(task_id="salesforce")
+    def salesforce_query():
+        
+        python_callable=sf_api_util.execute_query("SELECT * FROM CXP_Account_Name__c")
