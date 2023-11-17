@@ -51,3 +51,14 @@ def salesforce_query(ti: TaskInstance):
     # Now use this data in your Salesforce query
     query = f"SELECT * FROM CXP_Account_Name__c WHERE some_field = '{my_data}'"
     python_callable=sf_api_util.execute_query(query)
+
+from airflow.decorators import task
+
+@task(task_id="salesforce")
+def salesforce_query():
+    # Use the XComArg to pull data from the previous task
+    my_data = generate_data.output
+
+    # Now use this data in your Salesforce query
+    query = f"SELECT * FROM CXP_Account_Name__c WHERE some_field = '{my_data}'"
+    return sf_api_util.execute_query(query)
