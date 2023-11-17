@@ -40,3 +40,14 @@ Convertendo pra string a data
     def salesforce_query():
         
         python_callable=sf_api_util.execute_query("SELECT * FROM CXP_Account_Name__c")
+
+from airflow.models import TaskInstance
+
+@task(task_id="salesforce")
+def salesforce_query(ti: TaskInstance):
+    # Pull the data from the previous task
+    my_data = ti.xcom_pull(task_ids='generate_data')
+
+    # Now use this data in your Salesforce query
+    query = f"SELECT * FROM CXP_Account_Name__c WHERE some_field = '{my_data}'"
+    python_callable=sf_api_util.execute_query(query)
