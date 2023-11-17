@@ -68,3 +68,5 @@ def salesforce_query():
 (BaseOperator.xcom_pull() missing 1 required positional argument: 'context'; 114796)
 
 <function taskflow.<locals>.getting_execution_date at 0x7f63cb7b7b50>
+
+{{ task_instance.xcom_pull(task_ids='getting_execution_date_python_op', dag_id='snowflake_update_sfdc_monthly', key='return_value') }}
