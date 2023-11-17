@@ -62,3 +62,5 @@ def salesforce_query():
     # Now use this data in your Salesforce query
     query = f"SELECT * FROM CXP_Account_Name__c WHERE some_field = '{my_data}'"
     return sf_api_util.execute_query(query)
+
+{{ task_instance.xcom_pull(task_ids='getting_execution_date_python_op', dag_id='snowflake_update_sfdc_monthly', key='return_value') }}
