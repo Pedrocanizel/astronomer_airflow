@@ -27,3 +27,5 @@ pull_task = PythonOperator(
     python_callable=pull_execution_date,
     provide_context=True,
 )
+
+('DateTime' object has no attribute '__name__'; 43971)
