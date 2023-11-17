@@ -1,0 +1,6 @@
+from airflow.operators.bash import BashOperator
+
+my_task = BashOperator(
+    task_id='my_task',
+    bash_command='echo "The execution date is {{ ds }}"',
+)
