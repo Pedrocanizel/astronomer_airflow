@@ -4,3 +4,15 @@ my_task = BashOperator(
     task_id='my_task',
     bash_command='echo "The execution date is {{ ds }}"',
 )
+
+from airflow.operators.python import PythonOperator
+
+def my_function(execution_date, **context):
+    # Now you can use execution_date as a normal Python variable
+    print(execution_date)
+
+my_python_task = PythonOperator(
+    task_id='my_python_task',
+    python_callable=my_function,
+    provide_context=True,
+)
