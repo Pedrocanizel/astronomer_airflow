@@ -89,3 +89,8 @@ my_operator = PythonOperator(
     task_id='my_task',
     python_callable=getting_execution_date
 )
+
+"""SELECT FPA.CLIENT_FINAL, FPA.ACCOUNTING_PERIOD_END_DATE, SUM(FPA.VG_FEE_REVENUE) AS VG_FEE_REVENUE
+                        FROM ANALYTICS.DBT_MART_ROLLUP.DIM_FPA_BASE AS FPA
+                        WHERE FPA.ACCOUNTING_PERIOD_END_DATE = '2023-10-31' AND FPA.VG_FEE_REVENUE > 0
+                        GROUP BY ALL"""
