@@ -76,3 +76,16 @@ def getting_execution_date(execution_date, **context):
         dado = execution_date.strftime("%Y-%m-%d")
         
         return dado
+
+from airflow.operators.python import PythonOperator
+
+def getting_execution_date(**context):
+    execution_date = context['execution_date']
+    formatted_date = execution_date.strftime("%Y-%m-%d")
+    return formatted_date
+
+# Create a PythonOperator instance
+my_operator = PythonOperator(
+    task_id='my_task',
+    python_callable=getting_execution_date
+)
