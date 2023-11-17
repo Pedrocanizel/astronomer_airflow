@@ -29,3 +29,9 @@ pull_task = PythonOperator(
 )
 
 ('DateTime' object has no attribute '__name__'; 43971)
+
+def push_execution_date(execution_date, **context):
+    # Convert the execution date to a string and return
+    return execution_date.strftime("%Y-%m-%d")
+
+Convertendo pra string a data
