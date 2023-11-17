@@ -16,3 +16,14 @@ my_python_task = PythonOperator(
     python_callable=my_function,
     provide_context=True,
 )
+
+def pull_execution_date(**context):
+    # Retrieve the execution date from XCom
+    execution_date = context['task_instance'].xcom_pull(task_ids='push_execution_date')
+    print(f"Pulled execution date: {execution_date}")
+
+pull_task = PythonOperator(
+    task_id='pull_execution_date',
+    python_callable=pull_execution_date,
+    provide_context=True,
+)
