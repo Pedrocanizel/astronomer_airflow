@@ -9,7 +9,7 @@ from airflow.operators.python import PythonOperator
 
 def my_function(execution_date, **context):
     # Now you can use execution_date as a normal Python variable
-    print(execution_date)
+    return execution_date
 
 my_python_task = PythonOperator(
     task_id='my_python_task',
