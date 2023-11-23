@@ -1,0 +1,48 @@
+from airflow.decorators import dag, task
+from airflow.utils.dates import days_ago
+from airflow.utils.task_group import TaskGroup
+
+@dag(schedule_interval=None, start_date=days_ago(1), catchup=False)
+def my_dag():
+
+    with TaskGroup("Pair 1") as pair_1:
+        @task
+        def task_a():
+            # Define your task logic here
+            pass
+
+        @task
+        def task_b():
+            # Define your task logic here
+            pass
+
+        # Define dependencies within the TaskGroup
+        task_a() >> task_b()
+
+    with TaskGroup("Pair 2") as pair_2:
+        @task
+        def task_c():
+            # Define your task logic here
+            pass
+
+        @task
+        def task_d():
+            # Define your task logic here
+            pass
+
+        # Define dependencies within the TaskGroup
+        task_c() >> task_d()
+
+    with TaskGroup("Additional Tasks") as additional_tasks:
+        @task
+        def task_e():
+            # Define your task logic here
+            pass
+
+        # Define dependencies within the TaskGroup
+        task_e()
+
+    # Define dependencies between the TaskGroups
+    pair_1 >> pair_2 >> additional_tasks
+
+my_dag_instance = my_dag()
