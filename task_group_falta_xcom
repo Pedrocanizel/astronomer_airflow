@@ -1,0 +1,321 @@
+"""
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!REMEBER!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Verificar data_utils get_snowflake_conn...
+"""
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+import logging
+import json
+
+from airflow.decorators import dag, task, task_group
+from airflow.operators.dummy import DummyOperator
+from airflow.operators.python_operator import PythonOperator
+from airflow.hooks.base import BaseHook
+import pandas as pd
+
+from settings.dag_settings import DEFAULT_ARGS, CATCHUP, OWNER_LINKS
+from utils.data_utils import get_snowflake_connection
+from utils.salesforce_utils import SalesForceAPIUtil, CustomDecorators
+
+OWNER = "Pedro Canizela Neto"
+DEFAULT_ARGS.update({"owner": OWNER})
+
+
+@dag(
+    dag_id="nova_nova",
+    default_args=DEFAULT_ARGS,
+    start_date=datetime(2022, 1, 1),
+    schedule_interval="0 0 25 * *",
+    max_active_runs=1,
+    catchup=CATCHUP,
+    tags=["src_snowflake", "sfdc", "monthly", "ee_invoiced_mrr_last_12_months"],
+    description="""This dag updates the Opportunitylineitem
+                   object in Salesforce with data that comes
+                   from Snowflake on a monthly basis""",
+    owner_links=OWNER_LINKS,
+)
+def taskflow():
+
+    start = DummyOperator(task_id='start')
+
+    end = DummyOperator(task_id='end')
+
+    def get_execution_date(execution_date, **context):
+
+        """
+        1. This function obtains the execution date of the dag based in 
+        airflow's context so that it can calculate a period of 12 months
+        from the previous month and bring all the data together;
+        2. The execution date is then converted to a string so it 
+        can be shared between tasks (xcom);
+        3. Returns the data to be accessed through xcom.
+        """
+        
+        # Get and convert the 'date' to 'string' to be able to share between tasks
+        exec_date = execution_date.strftime("%Y-%m-%d")
+        
+        # Returns the data to be accessed through xcom
+        return exec_date
+    
+    # Instantiating the PythonOperator to be able to execute the function that gets the date
+    get_execution_date = PythonOperator(
+        task_id='get_execution_date',
+        python_callable=get_execution_date,
+        provide_context=True,
+    )
+    
+    @task_group(group_id="group1")
+    def tg1():
+
+        @task(task_id="get_snowflake_data_for_opplineitem")
+        def get_snowflake_data_for_opplineitem(**context):
+            """
+            1. This task gets the execution date acquired by the 
+            'getting_execution_date' task through xcom;
+            2. Transform the execution date that is in 'string' 
+            format to 'date' again so that some treatments can be executed;
+            3. Calculates the day the query starts and ends;
+            4. Query using pandas;
+            5. Selects only the columns that will be used in the salesforce query, 
+            'SALESFORCE_OPPORTUNITY_LINE_ITEM_ID' becomes 'OpportunityId' and 
+            'VG_FEE_REVENUE' becomes 'EE_Invoiced_MRR_Last_12_Months__c';
+            6. Returns the df so that it can be used in another task through xcom.
+            """
+            
+            # Getting the execution date from the task 'getting_execution_date' through xcom
+            exec_date = context["ti"].xcom_pull(
+                task_ids="get_execution_date", key="return_value"
+            )
+            
+            # Transforming 'string' to 'date' to apply some treatments
+            exec_date = datetime.strptime(exec_date, '%Y-%m-%d')
+
+            if exec_date.month == 1:
+                # If the current month is January, set the last month to December of the previous year
+                last_month = 12
+
+            else:
+                # For other months, subtract 1 from the month
+                last_month = exec_date.month - 1
+
+            # Calculate the year ago
+            one_year_ago = exec_date - relativedelta(years=1)
+            
+            # Getting the initial month of the query
+            one_year_one_month_ago = one_year_ago.replace(month=exec_date.month - 1)
+
+            # Calculate the first day of the query's initial month
+            first_day_of_start_month = one_year_one_month_ago.replace(day=1).strftime('%Y-%m-%d')
+
+            # Calculate the first day of the last month
+            first_day_last_month = exec_date.replace(day=1, month=last_month)
+
+            # Calculate the last day of the month by adding one month and subtracting one day
+            last_day_last_month = (first_day_last_month.replace(day=1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+
+            # Transforming 'date' to 'string' so that the query accepts the argument
+            last_day_last_month = last_day_last_month.strftime('%Y-%m-%d')
+
+            query = f"""SELECT
+                            DIM_EE.SALESFORCE_OPPORTUNITY_LINE_ITEM_ID,
+                            MONTH(FPA.ACCOUNTING_PERIOD_END_DATE) AS Month,
+                            SUM(FPA.VG_FEE_REVENUE) AS VG_FEE_REVENUE
+                        FROM ANALYTICS.DBT_MART_ROLLUP.DIM_FPA_BASE AS FPA
+                        JOIN ANALYTICS.DBT_MART_ROLLUP.DIM_EE AS DIM_EE
+                        ON FPA.CONTRACT_ID = DIM_EE.NETSUITE_EMPLOYEE_CONTRACT_ID
+                        WHERE
+                            FPA.ACCOUNTING_PERIOD_END_DATE >= '{first_day_of_start_month}' AND
+                            FPA.ACCOUNTING_PERIOD_END_DATE <= '{last_day_last_month}' AND
+                            FPA.VG_FEE_REVENUE > 0
+                        GROUP BY
+                            DIM_EE.SALESFORCE_OPPORTUNITY_LINE_ITEM_ID,
+                            Month"""
+
+            df = pd.read_sql_query(query,
+                                con=get_snowflake_connection("DBT_MART_ROLLUP"))
+            
+            # Selects only the columns that will be used in the salesforce query
+            df = df[['SALESFORCE_OPPORTUNITY_LINE_ITEM_ID', 'VG_FEE_REVENUE']]
+
+            return df
+        
+        @task(task_id="get_snowflake_data_for_account")
+        def get_snowflake_data_for_account(**context):
+            """
+            1. This task gets the execution date acquired by the
+            'getting_execution_date' task through xcom;
+            2. Transform the execution date that is in 'string'
+            format to 'date' again so that some treatments can be executed;
+            3. Calculates the day the query starts and ends;
+            4. Query using pandas;
+            5. Selects only the columns that will be used in the salesforce query,
+            'SALESFORCE_ACCOUNT_ID' becomes 'AccountId' and
+            'VG_FEE_REVENUE' becomes 'EE_Client_Invoiced_MRR_Last_12_Months__c';
+            6. Returns the df so that it can be used in another task through xcom.
+            """
+
+            # Getting the execution date from the task 'getting_execution_date' through xcom
+            exec_date = context["ti"].xcom_pull(
+                task_ids="get_execution_date", key="return_value"
+            )
+
+            # Transforming 'string' to 'date' to apply some treatments
+            exec_date = datetime.strptime(exec_date, '%Y-%m-%d')
+
+            if exec_date.month == 1:
+                # If the current month is January, set the last month to December of the previous year
+                last_month = 12
+
+            else:
+                # For other months, subtract 1 from the month
+                last_month = exec_date.month - 1
+
+            # Calculate the year ago
+            one_year_ago = exec_date - relativedelta(years=1)
+
+            # Getting the initial month of the query
+            one_year_one_month_ago = one_year_ago.replace(month=exec_date.month - 1)
+
+            # Calculate the first day of the query's initial month
+            first_day_of_start_month = one_year_one_month_ago.replace(day=1).strftime('%Y-%m-%d')
+
+            # Calculate the first day of the last month
+            first_day_last_month = exec_date.replace(day=1, month=last_month)
+
+            # Calculate the last day of the month by adding one month and subtracting one day
+            last_day_last_month = (first_day_last_month.replace(day=1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+
+            # Transforming 'date' to 'string' so that the query accepts the argument
+            last_day_last_month = last_day_last_month.strftime('%Y-%m-%d')
+            
+            query = f"""SELECT
+                            FPA.SALESFORCE_ACCOUNT_ID,
+                            MONTH(FPA.ACCOUNTING_PERIOD_END_DATE) AS Month,
+                            SUM(FPA.VG_FEE_REVENUE) AS VG_FEE_REVENUE
+                        FROM ANALYTICS.DBT_MART_ROLLUP.DIM_FPA_BASE AS FPA
+                        WHERE
+                            FPA.ACCOUNTING_PERIOD_END_DATE >= '{first_day_of_start_month}' AND
+                            FPA.ACCOUNTING_PERIOD_END_DATE <= '{last_day_last_month}' AND
+                            FPA.VG_FEE_REVENUE > 0
+                        GROUP BY
+                            FPA.SALESFORCE_ACCOUNT_ID,
+                            Month"""
+
+            df = pd.read_sql_query(query,
+                                con=get_snowflake_connection("DBT_MART_ROLLUP"))
+            
+            # Selects only the columns that will be used in the salesforce query
+            df = df[['SALESFORCE_ACCOUNT_ID', 'VG_FEE_REVENUE']]
+
+            return df
+
+        [get_snowflake_data_for_account(), get_snowflake_data_for_opplineitem()]
+
+    @task_group(group_id="group2")
+    def tg2():
+    
+        @task(task_id="salesforce_update_account")
+        def salesforce_update_account(**context):
+            """
+            1. Upload Salesforce credentials to access via the API;
+            2. Instantiate the class 'SalesForceAPIUtil' in the variable
+            'sf_api_util';
+            3. Access the dataframe with data from snowflake through xcom;
+            4. Make a for loop to iterate over the data present in the dataframe and use it in the salesforce api;
+            5. Equivalent columns:
+
+                            Account                           <->                 df
+                AccountId                                   <->  SALESFORCE_ACCOUNT_ID
+                EE_Client_Invoiced_MRR_Last_12_Months__c    <->  VG_FEE_REVENUE
+                Quantity                                    <->  Fixed value equal to 1
+
+            6. Calls the class method 'update_object' and passes its arguments for execution.
+            """
+
+            # Uploading Salesforce credentials to access via the API;
+            extra = json.loads(BaseHook.get_connection("salesforce_sandbox").extra)
+            host = BaseHook.get_connection("salesforce_sandbox").host
+            login = BaseHook.get_connection("salesforce_sandbox").login
+            password = BaseHook.get_connection("salesforce_sandbox").password
+            client_id = extra["client_id"]
+            client_secret = extra["client_secret"]
+            
+            # Instantiate the class 'SalesForceAPIUtil'
+            sf_api_util = SalesForceAPIUtil(host, login, password, client_id, client_secret)
+            
+            # Access the dataframe with data from snowflake through xcom
+            df = context["ti"].xcom_pull(
+                    task_ids="get_snowflake_data_for_account", key="return_value"
+                )
+            
+            # Make a for loop to iterate over the data present in the dataframe and use it in the salesforce api
+            for index, row in df.iterrows():
+
+                try:
+
+                    # Calls the class method 'update_object' and passes its arguments for execution
+                    sf_api_util.update_object(url=f"{sf_api_util.sobjects_endpoint}Account/'{row['SALESFORCE_ACCOUNT_ID']}'",
+                                                    object_dict={"EE_Client_Invoiced_MRR_Last_12_Months__c": row['VG_FEE_REVENUE'],
+                                                                "Quantity": 1})
+                                
+                except Exception as ex:
+
+                    # Log the exception
+                    logging.error(f"Error updating OpportunityLineItem for row {row['SALESFORCE_ACCOUNT_ID']}: {ex}")
+
+        @task(task_id="salesforce_update_opplineitem")
+        def salesforce_update_opplineitem(**context):
+            """
+            1. Upload Salesforce credentials to access via the API;
+            2. Instantiate the class 'SalesForceAPIUtil' in the variable
+            'sf_api_util';
+            3. Access the dataframe with data from snowflake through xcom;
+            4. Make a for loop to iterate over the data present in the dataframe and use it in the salesforce api;
+            5. Equivalent columns:
+
+            Opportunitylineitem                  <->                 df
+            OpportunityId                        <->  SALESFORCE_OPPORTUNITY_LINE_ITEM_ID
+            EE_Invoiced_MRR_Last_12_Months__c    <->  VG_FEE_REVENUE
+            Quantity                             <->  Fixed value equal to 1
+
+            6. Calls the class method 'update_object' and passes its arguments for execution.
+            """
+            
+            # Uploading Salesforce credentials to access via the API;
+            extra = json.loads(BaseHook.get_connection("salesforce_sandbox").extra)
+            host = BaseHook.get_connection("salesforce_sandbox").host
+            login = BaseHook.get_connection("salesforce_sandbox").login
+            password = BaseHook.get_connection("salesforce_sandbox").password
+            client_id = extra["client_id"]
+            client_secret = extra["client_secret"]
+            
+            # Instantiate the class 'SalesForceAPIUtil'
+            sf_api_util = SalesForceAPIUtil(host, login, password, client_id, client_secret)
+            
+            # Access the dataframe with data from snowflake through xcom
+            df = context["ti"].xcom_pull(
+                    task_ids="get_snowflake_data_for_opplineitem", key="return_value"
+                )
+            
+            # Make a for loop to iterate over the data present in the dataframe and use it in the salesforce api
+            for index, row in df.iterrows():
+
+                try:
+
+                    # Calls the class method 'update_object' and passes its arguments for execution
+                    sf_api_util.update_object(url=f"{sf_api_util.sobjects_endpoint}Opportunitylineitem/'{row['SALESFORCE_OPPORTUNITY_LINE_ITEM_ID']}'",
+                                                    object_dict={"EE_Invoiced_MRR_Last_12_Months__c": row['VG_FEE_REVENUE'],
+                                                                "Quantity": 1})
+                    
+                except Exception as ex:
+
+                    # Log the exception
+                    logging.error(f"Error updating OpportunityLineItem for row {row['SALESFORCE_OPPORTUNITY_LINE_ITEM_ID']}: {ex}")
+
+        [salesforce_update_opplineitem(), salesforce_update_account()]
+
+    start >> get_execution_date >> tg1() >> tg2() >> end
+
+
+dag = taskflow()
