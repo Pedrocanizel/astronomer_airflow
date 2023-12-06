@@ -1,0 +1,50 @@
+In Apache Airflow, you can use the `TriggerDagRunOperator` to trigger the execution of a task only if another task is successful. Here's a basic example:
+
+```python
+from airflow import DAG
+from airflow.operators.dummy_operator import DummyOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+from datetime import datetime, timedelta
+
+default_args = {
+    'owner': 'airflow',
+    'start_date': datetime(2023, 1, 1),
+    'depends_on_past': False,
+    'retries': 1,
+    'retry_delay': timedelta(minutes=5),
+}
+
+dag = DAG(
+    'your_dag_id',
+    default_args=default_args,
+    description='Your DAG description',
+    schedule_interval='@daily',
+)
+
+start_task = DummyOperator(
+    task_id='start_task',
+    dag=dag,
+)
+
+conditional_task = DummyOperator(
+    task_id='conditional_task',
+    trigger_rule='all_success',  # This ensures the task is triggered only if all upstream tasks succeed
+    dag=dag,
+)
+
+end_task = DummyOperator(
+    task_id='end_task',
+    dag=dag,
+)
+
+trigger_task = TriggerDagRunOperator(
+    task_id='trigger_task',
+    trigger_dag_id='your_triggered_dag_id',
+    dag=dag,
+)
+
+start_task >> conditional_task >> end_task
+conditional_task >> trigger_task
+```
+
+In this example, `conditional_task` will only execute if `start_task` is successful. If `conditional_task` succeeds, it triggers the execution of another DAG (`your_triggered_dag_id`) using the `TriggerDagRunOperator`. Adjust the DAG structure and parameters according to your specific requirements.
