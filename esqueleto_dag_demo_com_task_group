@@ -1,0 +1,118 @@
+from datetime import datetime
+
+from airflow.decorators import dag, task, task_group
+from airflow.operators.dummy import DummyOperator
+import pandas as pd
+
+from settings.dag_settings import (
+    DEFAULT_ARGS,
+    CATCHUP,
+    OWNER_LINKS,
+    SALESFORCE_CONNECTION_ID,
+)
+from utils.data_utils import get_snowflake_connection
+from utils.salesforce_utils import SalesforceUpdater
+
+OWNER = "Pedro Neto"
+DEFAULT_ARGS.update({"owner": OWNER})
+
+
+@dag(
+    dag_id="dag_demo_2",
+    default_args=DEFAULT_ARGS,
+    start_date=datetime(2024, 1, 1),
+    schedule_interval="@daily",
+    max_active_runs=1,
+    catchup=CATCHUP,
+    tags=["src_snowflake", "sfdc", "daily"],
+    description="""This dag updates a object in Salesforce
+                   with data that comes from Snowflake on a daily basis""",
+    owner_links=OWNER_LINKS,
+)
+def taskflow():
+    start = DummyOperator(task_id="start")
+
+    end = DummyOperator(task_id="end")
+
+    @task_group(group_id="group1")
+    def tg1():
+
+        @task(task_id="get_snowflake_data")
+        def get_snowflake_data():
+
+            query = """SELECT * FROM DB.SCHEMA.TABELA"""
+
+            df = pd.read_sql_query(query, con=get_snowflake_connection())
+
+            return df
+        
+        @task(task_id="get_snowflake_data_2")
+        def get_snowflake_data_2():
+
+            query = """SELECT * FROM DB.SCHEMA.TABELA"""
+
+            df = pd.read_sql_query(query, con=get_snowflake_connection())
+
+            return df
+        
+        @task(task_id="get_snowflake_data_3")
+        def get_snowflake_data_3():
+
+            query = """SELECT * FROM DB.SCHEMA.TABELA"""
+
+            df = pd.read_sql_query(query, con=get_snowflake_connection())
+
+            return df
+    
+        [get_snowflake_data(), get_snowflake_data_2(), get_snowflake_data_3()]
+
+
+    @task_group(group_id="group2")
+    def tg2():
+        
+        @task(task_id="salesforce_update")
+        def salesforce_update(**context):
+
+            df = context["ti"].xcom_pull(
+                task_ids="get_snowflake_data",
+                key="return_value",
+            )
+
+            sfdc_updt_instantiate = SalesforceUpdater(SALESFORCE_CONNECTION_ID)
+
+            sfdc_updt_instantiate.sfdc_updater(df)
+
+        @task(task_id="salesforce_update_2")
+        def salesforce_update_2(**context):
+
+            df = context["ti"].xcom_pull(
+                task_ids="get_snowflake_data",
+                key="return_value",
+            )
+
+            sfdc_updt_instantiate = SalesforceUpdater(SALESFORCE_CONNECTION_ID)
+
+            sfdc_updt_instantiate.sfdc_updater(df)
+
+        @task(task_id="salesforce_update_3")
+        def salesforce_update_3(**context):
+
+            df = context["ti"].xcom_pull(
+                task_ids="get_snowflake_data",
+                key="return_value",
+            )
+
+            sfdc_updt_instantiate = SalesforceUpdater(SALESFORCE_CONNECTION_ID)
+
+            sfdc_updt_instantiate.sfdc_updater(df)
+
+        [salesforce_update(), salesforce_update_2(), salesforce_update_3()]
+    
+    tg1 = tg1()
+
+    tg2 = tg2()
+
+    start >> tg1 >> tg2 >> end
+
+
+dag = taskflow()
